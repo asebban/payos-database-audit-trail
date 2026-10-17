@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE hibernate-mapping PUBLIC
+        "-//Hibernate/Hibernate Mapping DTD 3.0//EN"
+        "http://www.hibernate.org/dtd/hibernate-mapping-3.0.dtd" [
+        <!ATTLIST hibernate-mapping xmlns CDATA #REQUIRED>
+]>
+<hibernate-mapping xmlns="http://www.hibernate.org/schema/hibernate-mapping" package="com.example">
+    <!--
+        Canonical mapping for payos_audit_event (payos/docs/architects/atomic-db-audit-queue-v17-2026-10-15.md §3.2).
+        Entity-name based (dynamic-map), same convention every other $DB-style entity in PayOS uses —
+        read/written only through IDatabaseService's generic entityName + Map<String,Object> surface,
+        never a generated Java class. business_keys/extra are stored as Jackson-serialized JSON text
+        (no native JSON column type in a dynamic-map mapping); DatabaseAuditLogger (de)serializes them.
+    -->
+    <class entity-name="PayosAuditEvent" table="payos_audit_event" dynamic-insert="true" dynamic-update="true">
+        <id name="eventId" type="string" column="event_id">
+            <generator class="assigned"/>
+        </id>
+        <property name="schemaVersion" type="integer" column="schema_version"/>
+        <property name="eventType" type="string" column="event_type" not-null="true"/>
+        <property name="tenantId" type="string" column="tenant_id"/>
+        <property name="correlationId" type="string" column="correlation_id"/>
+        <property name="appId" type="string" column="app_id"/>
+        <property name="path" type="string" column="path"/>
+        <property name="userId" type="string" column="user_id"/>
+        <property name="result" type="string" column="result"/>
+        <property name="operation" type="string" column="operation"/>
+        <property name="resourceType" type="string" column="resource_type"/>
+        <property name="resourceId" type="string" column="resource_id"/>
+        <property name="businessKeysJson" type="text" column="business_keys"/>
+        <property name="fieldsJson" type="text" column="fields"/>
+        <property name="createdAt" type="timestamp" column="created_at" not-null="true"/>
+        <property name="exportedAt" type="timestamp" column="exported_at"/>
+    </class>
+</hibernate-mapping>

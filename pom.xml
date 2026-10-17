@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>ma.s2m.payos</groupId>
+        <artifactId>payos-parent</artifactId>
+        <version>2.0.0-RELEASE</version>
+        <relativePath>../payos-parent/pom.xml</relativePath>
+    </parent>
+
+    <artifactId>payos-database-audit-trail</artifactId>
+    <version>1.0.0-RELEASE</version>
+    <packaging>jar</packaging>
+
+    <name>payos-database-audit-trail</name>
+    <description>Database-backed (database category) IAuditLogger implementation for the PayOS audit-trail capability: every event (system and $Audit) written synchronously to its own payos_audit_event table — one dedicated session per write, never a request's own $DB/$PlatformDB session, never an in-memory buffer — with a background Writer exporting to the configured IAuditTrailStore and purging rows past the configured retention, per-event-type suppression, and a fatal (FatalException), not degraded, startup when payos_audit_event cannot be created. See payos/docs/architects/atomic-db-audit-queue-v17-2026-10-15.md.</description>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>ma.s2m.payos</groupId>
+                <artifactId>payos-core-bom</artifactId>
+                <version>2.3.0-RELEASE</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <dependencies>
+        <!-- Owns IAuditLogger, AuditEvent, IMetricsRecorder/MetricSample, FatalException — provided by the runtime -->
+        <dependency>
+            <groupId>ma.s2m.payos</groupId>
+            <artifactId>payos-foundation</artifactId>
+            <scope>provided</scope>
+        </dependency>
+
+        <!-- Owns the MetricsRecorder static facade (ma.s2m.payos.events.metrics) and PayOSConfig
+             (ma.s2m.payos.config) — same pattern as payos-buffered-audit-trail's payos-kernel
+             dependency — provided by the runtime -->
+        <dependency>
+            <groupId>ma.s2m.payos</groupId>
+            <artifactId>payos-kernel</artifactId>
+            <scope>provided</scope>
+        </dependency>
+
+        <!-- Owns IDatabaseService/IDatabaseService.DedicatedTenantSession/ensureSchemaFor — the
+             concrete implementation backing PayOSConfig.getDatabaseService()/getPlatformDatabaseService()
+             at runtime; declared directly anyway per this project's "declare what you use" convention,
+             not because this module constructs it itself -->
+        <dependency>
+            <groupId>ma.s2m</groupId>
+            <artifactId>dynamic-database-service</artifactId>
+            <version>2.2.0-RELEASE</version>
+            <scope>provided</scope>
+        </dependency>
+
+        <!-- Logging API — provided by the runtime -->
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
+            <scope>provided</scope>
+        </dependency>
+
+        <!-- Test dependencies -->
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.assertj</groupId>
+            <artifactId>assertj-core</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.h2database</groupId>
+            <artifactId>h2</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>ch.qos.logback</groupId>
+            <artifactId>logback-classic</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+</project>
