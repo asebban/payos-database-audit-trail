@@ -3,6 +3,8 @@ package ma.s2m.payos.audit.database;
 import ma.s2m.DynamicDataAccessService;
 import ma.s2m.payos.config.IConfigSpec;
 import ma.s2m.payos.config.PayOSConfig;
+import ma.s2m.payos.database.AtomicWriteContext;
+import ma.s2m.payos.events.audit.AuditEvent;
 import ma.s2m.payos.exceptions.FatalException;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -170,6 +172,43 @@ class DatabaseAuditLoggerTest {
                 .isInstanceOf(FatalException.class);
     }
 
+    /**
+     * Regression test for a real gap found in review: {@code ensureSchemaFor(...)} only creates
+     * the physical table via a throwaway {@code SessionFactory} — it does NOT make {@code
+     * "PayosAuditEvent"} resolvable on the tenant's own, ongoing {@code $DB} {@code SessionFactory}
+     * unless the deployment also lists {@code mappings/PayosAuditEvent.hbm.xml} in that tenant's
+     * own {@code mapping-files}. A tenant configured only with its own business entity (as any
+     * real deployment's {@code database-service.mapping-files} would be) must fail startup with a
+     * clear, actionable message instead of only failing the first time a script calls {@code
+     * $Audit.logEvent(...)}, as a raw {@code org.hibernate.MappingException: Unknown entity}.
+     */
+    @Test
+    void initializeThrowsFatalExceptionWhenTheTenantsOwnMappingFilesForgotToRegisterTheAuditMapping() {
+        String tenantIdMissingMapping = "tenant-missing-mapping-" + UUID.randomUUID().toString().replace("-", "");
+        String jdbcUrl = "jdbc:h2:mem:audit_missing_mapping_" + UUID.randomUUID().toString().replace("-", "") + ";DB_CLOSE_DELAY=-1";
+
+        Map<String, DynamicDataAccessService.TenantConfig> registry = new LinkedHashMap<>();
+        // This tenant's own mapping-files is just its business entity — exactly like a real
+        // deployment that forgot to also list PayosAuditEvent.hbm.xml.
+        registry.put(tenantIdMissingMapping, new DynamicDataAccessService.TenantConfig(
+                jdbcUrl, "sa", "", "org.h2.Driver", "org.hibernate.dialect.H2Dialect",
+                "update", "PUBLIC", "mappings/UnrelatedEntity.hbm.xml"));
+        DynamicDataAccessService multiTenantMissingMapping = new DynamicDataAccessService(registry);
+
+        PayOSConfig.setDatabaseService(multiTenantMissingMapping);
+        PayOSConfig.settings.put(IConfigSpec.Multitenancy.name,
+                Map.of(IConfigSpec.Multitenancy.Tenants.name, Map.of(tenantIdMissingMapping, Map.of())));
+
+        DatabaseAuditLogger failingLogger = new DatabaseAuditLogger();
+
+        assertThatThrownBy(() -> failingLogger.initialize(Map.of()))
+                .isInstanceOf(FatalException.class)
+                .cause()
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("mapping-files")
+                .hasMessageContaining("PayosAuditEvent");
+    }
+
     @Test
     void aWriteFailureForAnUnregisteredTenantIsLoggedAndSwallowedNeverThrown() {
         assertThatCode(() -> auditLogger.logApiExecution(
@@ -184,5 +223,80 @@ class DatabaseAuditLoggerTest {
         List<Map<String, Object>> rows = fetchTenantRows("SESSION_CREATED");
         assertThat(rows).hasSize(1);
         assertThat((String) rows.get(0).get("fieldsJson")).contains("a-very-l").doesNotContain("identifier-value");
+    }
+
+    // -----------------------------------------------------------------------
+    // logEvent(...) via AtomicWriteContext - the $Audit path (AuditBinding, payos kernel)
+    // -----------------------------------------------------------------------
+
+    /**
+     * Covers the capability {@code $Audit} actually relies on: when {@link AtomicWriteContext}
+     * holds a session (here, the same {@code multiTenantService} a real {@code $DB} session would
+     * be), {@link DatabaseAuditLogger#logEvent} writes through <em>that</em> session, never one
+     * it opens itself — unlike every {@link #logApiExecutionWritesARowForTheGivenTenantIndependentlyOfItsOwnDdlAuto}-style
+     * system event above, which always uses its own short-lived session (no ambient context set).
+     * {@code AuditBinding} sets this context unconditionally, for every active {@code
+     * IAuditLogger} — this class is simply the one that happens to check for it.
+     */
+    @Test
+    void logEventWritesThroughTheAmbientSessionForTheTenantWhenOneIsSet() {
+        multiTenantService.setCurrentTenant(tenantId);
+        AtomicWriteContext.set(multiTenantService);
+        try {
+            AuditEvent event = AuditEvent.of("CARD_TOKENISED").tenantId(tenantId).result("SUCCESS")
+                    .field("maskedPan", "************1234").build();
+
+            auditLogger.logEvent(event);
+        } finally {
+            AtomicWriteContext.clear();
+            multiTenantService.clearCurrentTenant();
+        }
+
+        List<Map<String, Object>> rows = fetchTenantRows("CARD_TOKENISED");
+        assertThat(rows).hasSize(1);
+        assertThat(rows.get(0).get("tenantId")).isEqualTo(tenantId);
+        assertThat((String) rows.get(0).get("fieldsJson")).contains("maskedPan");
+    }
+
+    @Test
+    void logEventWritesThroughTheAmbientSessionForThePlatformWhenOneIsSet() {
+        AuditEvent event = AuditEvent.of("REFERENCE_DATA_REFRESHED").result("SUCCESS").build();
+
+        AtomicWriteContext.set(platformService);
+        try {
+            auditLogger.logEvent(event);
+        } finally {
+            AtomicWriteContext.clear();
+        }
+
+        assertThat(fetchPlatformRows("REFERENCE_DATA_REFRESHED")).hasSize(1);
+    }
+
+    /**
+     * {@code disabled-event-types} is scoped to the kernel's own frequent system events (no
+     * ambient context set) only — a script's own {@code $Audit.logEvent(...)} must never be
+     * silently filtered by it, so the ambient-session branch must ignore it entirely.
+     */
+    @Test
+    void logEventThroughTheAmbientSessionIsNeverFilteredByDisabledEventTypes() {
+        DatabaseAuditLogger suppressingLogger = new DatabaseAuditLogger();
+        suppressingLogger.initialize(Map.of(
+                "disabled-event-types", List.of("CARD_TOKENISED"),
+                "poll-interval-seconds", 3600));
+        try {
+            multiTenantService.setCurrentTenant(tenantId);
+            AtomicWriteContext.set(multiTenantService);
+            try {
+                suppressingLogger.logEvent(
+                        AuditEvent.of("CARD_TOKENISED").tenantId(tenantId).result("SUCCESS").build());
+            } finally {
+                AtomicWriteContext.clear();
+                multiTenantService.clearCurrentTenant();
+            }
+
+            assertThat(fetchTenantRows("CARD_TOKENISED")).hasSize(1);
+        } finally {
+            suppressingLogger.shutdown();
+        }
     }
 }
