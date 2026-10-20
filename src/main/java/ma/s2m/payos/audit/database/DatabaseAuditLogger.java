@@ -1,8 +1,8 @@
 package ma.s2m.payos.audit.database;
 
-import ma.s2m.payos.config.IConfigSpec;
 import ma.s2m.payos.config.PayOSConfig;
 import ma.s2m.payos.database.AtomicWriteContext;
+import ma.s2m.payos.database.DatabaseServiceInitializer;
 import ma.s2m.payos.database.IDatabaseService;
 import ma.s2m.payos.events.audit.AuditEvent;
 import ma.s2m.payos.events.audit.IAuditLogger;
@@ -194,24 +194,14 @@ public final class DatabaseAuditLogger implements IAuditLogger {
         }
     }
 
-    /** Same source {@code TenantPolicyService.validateKnownTenant} already reads — {@code multitenancy.tenants} keys. */
-    @SuppressWarnings("unchecked")
+    /**
+     * Tenants this probe actually needs to cover: every {@code multitenancy.tenants} entry
+     * authorized for at least one declared {@code applications[]} entry — a tenant with zero
+     * authorized applications can never have a script run under it, so it can never reach {@code
+     * $Audit} either. See {@link DatabaseServiceInitializer#tenantsAuthorizedForAnyApplication}.
+     */
     static Set<String> knownTenantIds() {
-        Object multitenancyObj = PayOSConfig.settings.get(IConfigSpec.Multitenancy.name);
-        if (!(multitenancyObj instanceof Map<?, ?> multitenancy)) {
-            return Set.of();
-        }
-        Object tenantsObj = ((Map<String, Object>) multitenancy).get(IConfigSpec.Multitenancy.Tenants.name);
-        if (!(tenantsObj instanceof Map<?, ?> tenants)) {
-            return Set.of();
-        }
-        Set<String> ids = new LinkedHashSet<>();
-        for (Object key : tenants.keySet()) {
-            if (key != null) {
-                ids.add(key.toString());
-            }
-        }
-        return ids;
+        return DatabaseServiceInitializer.tenantsAuthorizedForAnyApplication(PayOSConfig.settings);
     }
 
     // -----------------------------------------------------------------------
