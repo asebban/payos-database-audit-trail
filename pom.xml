@@ -23,7 +23,7 @@
             <dependency>
                 <groupId>ma.s2m.payos</groupId>
                 <artifactId>payos-core-bom</artifactId>
-                <version>2.4.0-RELEASE</version>
+                <version>2.4.1-RELEASE</version>
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
